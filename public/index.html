@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Scanner Live Feed</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Top Header -->
+    <header class="top-bar">
+      <div class="brand">
+        <span class="status-indicator" id="statusIndicator"></span>
+        <h1 class="brand-title">Scanner Live Stream</h1>
+        <span class="live-tag" id="liveTag">CONNECTING</span>
+      </div>
+
+      <div class="metrics-strip">
+        <div class="metric-item">
+          <span class="metric-label">SPEED</span>
+          <span class="metric-value" id="rateValue">0.0/s</span>
+        </div>
+        <div class="metric-item">
+          <span class="metric-label">SCANNED</span>
+          <span class="metric-value" id="scannedValue">0</span>
+        </div>
+        <div class="metric-item">
+          <span class="metric-label">AVAILABLE</span>
+          <span class="metric-value highlight" id="availableValue">0</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Controls Bar -->
+    <section class="controls-bar">
+      <div class="filter-group">
+        <label for="platformFilter" class="control-label">Platform:</label>
+        <select id="platformFilter" class="select-input">
+          <option value="all">All Platforms</option>
+          <option value="roblox">Roblox</option>
+          <option value="discord">Discord</option>
+          <option value="tiktok">TikTok</option>
+          <option value="minecraft">Minecraft</option>
+          <option value="twitch">Twitch</option>
+        </select>
+      </div>
+
+      <div class="filter-group">
+        <label for="statusFilter" class="control-label">View:</label>
+        <select id="statusFilter" class="select-input">
+          <option value="all">All Checks</option>
+          <option value="available">Available Only</option>
+        </select>
+      </div>
+
+      <div class="actions-group">
+        <button id="soundToggleBtn" class="btn btn-secondary">Audio: Off</button>
+        <button id="pauseBtn" class="btn btn-secondary">Pause Stream</button>
+        <button id="clearBtn" class="btn btn-secondary">Clear</button>
+      </div>
+    </section>
+
+    <!-- Main Content Grid -->
+    <main class="main-grid">
+      <!-- Left Column: Available Hits -->
+      <section class="card available-card">
+        <div class="card-header">
+          <h2 class="card-title">Available Usernames</h2>
+          <span class="card-counter" id="hitCount">0 found</span>
+        </div>
+        <div class="card-body" id="availableList">
+          <div class="empty-state" id="emptyHits">No available usernames found yet.</div>
+        </div>
+      </section>
+
+      <!-- Right Column: Live Stream Feed -->
+      <section class="card feed-card">
+        <div class="card-header">
+          <h2 class="card-title">Live Candidate Stream</h2>
+          <span class="card-status" id="streamStatus">Receiving updates</span>
+        </div>
+        <div class="card-body terminal-body" id="streamList">
+          <!-- Live check rows injected here -->
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+{
+  "name": "sniper-live-dashboard",
+  "version": "1.0.0",
+  "description": "simplistic real-time username sniper live dashboard for vercel",
+  "main": "api/events.js",
+  "scripts": {
+    "start": "node server.js"
+  }
+}

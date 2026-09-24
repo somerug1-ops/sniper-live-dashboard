@@ -1,0 +1,20 @@
+# dependencies
+node_modules
+.pnp
+.pnp.js
+
+# vercel
+.vercel
+
+# environment
+.env
+.env.local
+
+# logs
+logs
+*.log
+npm-debug.log*
+
+# system
+.DS_Store
+Thumbs.db
