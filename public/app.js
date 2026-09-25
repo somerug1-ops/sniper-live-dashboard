@@ -1,4 +1,4 @@
-// live job search feedback stream
+// live job search feedback stream with smooth unspooling queue
 (() => {
   const jobInput = document.getElementById("jobInput");
   const output = document.getElementById("output");
@@ -6,8 +6,11 @@
   let activeJobId = "";
   let lastSeq = 0;
   let pollTimer = null;
+  let eventSource = null;
   let isFetching = false;
+  let unspoolTimer = null;
   const renderedKeys = new Set();
+  const unspoolQueue = [];
 
   const params = new URLSearchParams(window.location.search);
   const initialJob = params.get("job") || params.get("id") || "";
@@ -16,36 +19,61 @@
     activeJobId = initialJob.trim().toLowerCase();
   }
 
-  function appendLine(item) {
+  function queueItem(item) {
+    if (!item || !item.username) return;
     const key = `${item.seq || ''}-${item.platform}-${item.username}-${item.status}`;
     if (renderedKeys.has(key)) return;
     renderedKeys.add(key);
-    if (renderedKeys.size > 800) {
+
+    if (item.seq && item.seq > lastSeq) {
+      lastSeq = item.seq;
+    }
+
+    if (renderedKeys.size > 1000) {
       const first = renderedKeys.values().next().value;
       renderedKeys.delete(first);
     }
 
+    unspoolQueue.push(item);
+  }
+
+  // smooth unspooling ticker to prevent visual stutter and dom reflow thrashing
+  function tickUnspool() {
+    if (unspoolQueue.length === 0) return;
+
     const notice = document.getElementById("notice");
     if (notice) notice.remove();
 
-    const line = document.createElement("div");
-    const status = (item.status || "checked").toLowerCase();
-    line.className = `line ${status}`;
+    // dynamically adapt drain count: release 1 per tick under low queue, catch up when high
+    const count = unspoolQueue.length > 25
+      ? Math.min(8, Math.ceil(unspoolQueue.length / 5))
+      : 1;
 
-    // exact requested line output
-    line.textContent = `checked "${item.username}" on ${item.platform} - ${item.status}`;
-    output.appendChild(line);
+    const fragment = document.createDocumentFragment();
+    for (let i = 0; i < count && unspoolQueue.length > 0; i++) {
+      const item = unspoolQueue.shift();
+      const line = document.createElement("div");
+      const status = (item.status || "checked").toLowerCase();
+      line.className = `line ${status}`;
+      line.textContent = `checked "${item.username}" on ${item.platform} - ${item.status}`;
+      fragment.appendChild(line);
+    }
 
-    if (output.childElementCount > maxLines) {
+    output.appendChild(fragment);
+
+    // prune excessive lines
+    while (output.childElementCount > maxLines) {
       output.removeChild(output.firstElementChild);
     }
 
+    // single scroll update per tick
     output.scrollTop = output.scrollHeight;
   }
 
   function renderNotice(msg) {
     output.innerHTML = "";
     renderedKeys.clear();
+    unspoolQueue.length = 0;
     const notice = document.createElement("div");
     notice.className = "notice";
     notice.id = "notice";
@@ -53,6 +81,7 @@
     output.appendChild(notice);
   }
 
+  // fast background poller to guarantee no checks are lost across cold restarts
   async function fetchUpdates() {
     if (!activeJobId || isFetching) return;
     isFetching = true;
@@ -67,10 +96,8 @@
         }
 
         const items = data.recent || [];
-        if (items.length > 0) {
-          for (const item of items) {
-            appendLine(item);
-          }
+        for (const item of items) {
+          queueItem(item);
         }
       }
     } catch {} finally {
@@ -78,10 +105,48 @@
     }
   }
 
+  function connectSse() {
+    if (eventSource) {
+      eventSource.close();
+      eventSource = null;
+    }
+
+    if (!activeJobId) return;
+
+    try {
+      const streamUrl = `/api/events?stream=1&jobId=${encodeURIComponent(activeJobId)}&since=${lastSeq}`;
+      eventSource = new EventSource(streamUrl);
+
+      eventSource.onmessage = e => {
+        try {
+          const data = JSON.parse(e.data);
+          if (data.lastSeq !== undefined) {
+            lastSeq = Math.max(lastSeq, data.lastSeq);
+          }
+          const items = data.checks || [];
+          for (const item of items) {
+            queueItem(item);
+          }
+        } catch {}
+      };
+
+      eventSource.onerror = () => {
+        // browser will auto-reconnect using the retry duration
+      };
+    } catch {}
+  }
+
   function startLiveSync() {
     if (pollTimer) clearInterval(pollTimer);
+    if (unspoolTimer) clearInterval(unspoolTimer);
+    if (eventSource) {
+      eventSource.close();
+      eventSource = null;
+    }
+
     lastSeq = 0;
     renderedKeys.clear();
+    unspoolQueue.length = 0;
 
     if (!activeJobId) {
       renderNotice("Enter a Job ID above to view live search output.");
@@ -90,9 +155,15 @@
 
     renderNotice(`Connecting to live stream for job ${activeJobId}...`);
 
-    // fetch immediately then repeat every 350ms
+    // unspool ticker runs every 25ms (40 fps smooth output)
+    unspoolTimer = setInterval(tickUnspool, 25);
+
+    // primary: direct server-sent events stream
+    connectSse();
+
+    // secondary: fast background poll every 250ms to ensure zero missed checks
     fetchUpdates();
-    pollTimer = setInterval(fetchUpdates, 350);
+    pollTimer = setInterval(fetchUpdates, 250);
   }
 
   jobInput.addEventListener("input", e => {

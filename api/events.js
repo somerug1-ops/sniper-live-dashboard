@@ -91,6 +91,7 @@ module.exports = async function handler(req, res) {
         "Cache-Control": "no-cache",
         "Connection": "keep-alive"
       });
+      res.write("retry: 800\n\n");
       res.write(`data: ${JSON.stringify({ checks: [] })}\n\n`);
       return;
     }
@@ -113,16 +114,28 @@ module.exports = async function handler(req, res) {
       "Connection": "keep-alive"
     });
 
+    res.write("retry: 800\n\n");
     res.write(`data: ${JSON.stringify({
       type: "init",
-      checks: filteredRecent.slice(-100),
+      checks: sinceSeq > 0 ? filteredRecent : filteredRecent.slice(-100),
       lastSeq: seqCounter
     })}\n\n`);
 
     const clientObj = { res, jobId: filterJobId };
     sseClients.add(clientObj);
 
+    // keep connection alive against proxy timeouts
+    const pingTimer = setInterval(() => {
+      try {
+        res.write(": keepalive\n\n");
+      } catch {
+        clearInterval(pingTimer);
+        sseClients.delete(clientObj);
+      }
+    }, 4000);
+
     req.on("close", () => {
+      clearInterval(pingTimer);
       sseClients.delete(clientObj);
     });
     return;
