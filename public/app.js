@@ -10,10 +10,16 @@
   const renderedKeys = new Set();
 
   const params = new URLSearchParams(window.location.search);
-  const initialJob = params.get("job") || params.get("id") || "";
+  const pathMatch = window.location.pathname.match(/^\/jobid-([a-zA-Z0-9_-]+)/i) ||
+                    window.location.pathname.match(/^\/job-([a-zA-Z0-9_-]+)/i);
+  const pathJob = pathMatch ? pathMatch[1] : "";
+  const initialJob = params.get("job") || params.get("id") || pathJob || "";
   if (initialJob) {
     jobInput.value = initialJob;
     activeJobId = initialJob.trim().toLowerCase();
+    if (pathJob && window.history && typeof window.history.replaceState === "function") {
+      window.history.replaceState({}, "", `/?job=${encodeURIComponent(activeJobId)}`);
+    }
   }
 
   // render incoming checks immediately with zero artificial delay
@@ -138,6 +144,9 @@
     if (val === activeJobId) return;
 
     activeJobId = val;
+    if (window.history && typeof window.history.replaceState === "function") {
+      window.history.replaceState({}, "", val ? `/?job=${encodeURIComponent(val)}` : "/");
+    }
     startLiveSync();
   });
 

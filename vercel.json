@@ -6,6 +6,14 @@
       "destination": "/api/$1"
     },
     {
+      "source": "/jobid-(.*)",
+      "destination": "/public/index.html"
+    },
+    {
+      "source": "/job-(.*)",
+      "destination": "/public/index.html"
+    },
+    {
       "source": "/(.*)",
       "destination": "/public/$1"
     }
