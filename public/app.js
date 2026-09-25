@@ -4,9 +4,7 @@
   const output = document.getElementById("output");
   const maxLines = 500;
   let activeJobId = "";
-  let lastSeq = 0;
   let pollTimer = null;
-  let eventSource = null;
   let isFetching = false;
   let unspoolTimer = null;
   const renderedKeys = new Set();
@@ -21,15 +19,11 @@
 
   function queueItem(item) {
     if (!item || !item.username) return;
-    const key = `${item.seq || ''}-${item.platform}-${item.username}-${item.status}`;
+    const key = item.id || `${item.platform}-${item.username}-${item.status}`;
     if (renderedKeys.has(key)) return;
     renderedKeys.add(key);
 
-    if (item.seq && item.seq > lastSeq) {
-      lastSeq = item.seq;
-    }
-
-    if (renderedKeys.size > 1000) {
+    if (renderedKeys.size > 2000) {
       const first = renderedKeys.values().next().value;
       renderedKeys.delete(first);
     }
@@ -37,16 +31,16 @@
     unspoolQueue.push(item);
   }
 
-  // smooth unspooling ticker to prevent visual stutter and dom reflow thrashing
+  // smooth unspooling ticker to maintain continuous live output without bursts
   function tickUnspool() {
     if (unspoolQueue.length === 0) return;
 
     const notice = document.getElementById("notice");
     if (notice) notice.remove();
 
-    // dynamically adapt drain count: release 1 per tick under low queue, catch up when high
-    const count = unspoolQueue.length > 25
-      ? Math.min(8, Math.ceil(unspoolQueue.length / 5))
+    // if queue is small, release 1 per tick; if queue grows, smoothly pace it out
+    const count = unspoolQueue.length > 20
+      ? Math.min(4, Math.ceil(unspoolQueue.length / 5))
       : 1;
 
     const fragment = document.createDocumentFragment();
@@ -81,20 +75,16 @@
     output.appendChild(notice);
   }
 
-  // fast background poller to guarantee no checks are lost across cold restarts
+  // high-frequency live poller with cache-busting timestamp
   async function fetchUpdates() {
     if (!activeJobId || isFetching) return;
     isFetching = true;
 
     try {
-      const url = `/api/events?jobId=${encodeURIComponent(activeJobId)}&since=${lastSeq}`;
-      const res = await fetch(url);
+      const url = `/api/events?jobId=${encodeURIComponent(activeJobId)}&_t=${Date.now()}`;
+      const res = await fetch(url, { cache: "no-store" });
       if (res.ok) {
         const data = await res.json();
-        if (data.lastSeq !== undefined) {
-          lastSeq = Math.max(lastSeq, data.lastSeq);
-        }
-
         const items = data.recent || [];
         for (const item of items) {
           queueItem(item);
@@ -105,46 +95,10 @@
     }
   }
 
-  function connectSse() {
-    if (eventSource) {
-      eventSource.close();
-      eventSource = null;
-    }
-
-    if (!activeJobId) return;
-
-    try {
-      const streamUrl = `/api/events?stream=1&jobId=${encodeURIComponent(activeJobId)}&since=${lastSeq}`;
-      eventSource = new EventSource(streamUrl);
-
-      eventSource.onmessage = e => {
-        try {
-          const data = JSON.parse(e.data);
-          if (data.lastSeq !== undefined) {
-            lastSeq = Math.max(lastSeq, data.lastSeq);
-          }
-          const items = data.checks || [];
-          for (const item of items) {
-            queueItem(item);
-          }
-        } catch {}
-      };
-
-      eventSource.onerror = () => {
-        // browser will auto-reconnect using the retry duration
-      };
-    } catch {}
-  }
-
   function startLiveSync() {
     if (pollTimer) clearInterval(pollTimer);
     if (unspoolTimer) clearInterval(unspoolTimer);
-    if (eventSource) {
-      eventSource.close();
-      eventSource = null;
-    }
 
-    lastSeq = 0;
     renderedKeys.clear();
     unspoolQueue.length = 0;
 
@@ -155,15 +109,12 @@
 
     renderNotice(`Connecting to live stream for job ${activeJobId}...`);
 
-    // unspool ticker runs every 25ms (40 fps smooth output)
-    unspoolTimer = setInterval(tickUnspool, 25);
+    // unspool ticker runs every 30ms for continuous smooth output
+    unspoolTimer = setInterval(tickUnspool, 30);
 
-    // primary: direct server-sent events stream
-    connectSse();
-
-    // secondary: fast background poll every 250ms to ensure zero missed checks
+    // poll every 180ms with cache busting
     fetchUpdates();
-    pollTimer = setInterval(fetchUpdates, 250);
+    pollTimer = setInterval(fetchUpdates, 180);
   }
 
   jobInput.addEventListener("input", e => {
