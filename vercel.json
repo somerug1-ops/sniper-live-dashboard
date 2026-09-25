@@ -7,15 +7,11 @@
     },
     {
       "source": "/jobid-(.*)",
-      "destination": "/public/index.html"
+      "destination": "/index.html"
     },
     {
       "source": "/job-(.*)",
-      "destination": "/public/index.html"
-    },
-    {
-      "source": "/(.*)",
-      "destination": "/public/$1"
+      "destination": "/index.html"
     }
   ]
 }
