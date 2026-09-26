@@ -1,7 +1,12 @@
 // serverless handler for job-isolated sniper stream
 let recentChecks = [];
-const maxChecks = 400;
+const maxChecks = 2000;
+const jobChecksMap = new Map();
 let sseClients = new Set();
+
+function normalizeJobId(str) {
+  return String(str || "").replace(/^job(?:id)?[-_:]*/i, "").trim().toLowerCase();
+}
 
 module.exports = async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -28,12 +33,29 @@ module.exports = async function handler(req, res) {
         if (Array.isArray(payload.checks)) {
           const newEntries = [];
           for (const item of payload.checks) {
+            const cleanId = normalizeJobId(item.jobId);
             const entry = {
               ...item,
-              id: item.id || `${item.platform || ''}-${item.username || ''}-${item.timestamp || Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+              jobId: cleanId,
+              id: item.id || `${cleanId || ''}-${item.platform || ''}-${item.username || ''}-${item.timestamp || Date.now()}-${Math.random().toString(36).slice(2, 6)}`
             };
             recentChecks.push(entry);
             newEntries.push(entry);
+
+            if (cleanId) {
+              if (!jobChecksMap.has(cleanId)) {
+                if (jobChecksMap.size > 200) {
+                  const oldestKey = jobChecksMap.keys().next().value;
+                  jobChecksMap.delete(oldestKey);
+                }
+                jobChecksMap.set(cleanId, []);
+              }
+              const list = jobChecksMap.get(cleanId);
+              list.push(entry);
+              if (list.length > 300) {
+                list.shift();
+              }
+            }
           }
 
           if (recentChecks.length > maxChecks) {
@@ -43,11 +65,11 @@ module.exports = async function handler(req, res) {
           // immediate instant push to connected sse clients
           for (const client of sseClients) {
             try {
-              const matched = client.jobId
+              const clientJob = normalizeJobId(client.jobId);
+              const matched = clientJob
                 ? newEntries.filter(c => {
-                    const cJob = String(c.jobId || "").toLowerCase();
-                    const target = client.jobId.toLowerCase();
-                    return cJob.includes(target) || target.includes(cJob);
+                    const cJob = normalizeJobId(c.jobId);
+                    return cJob && (cJob === clientJob || cJob.includes(clientJob) || clientJob.includes(cJob));
                   })
                 : [];
 
@@ -72,13 +94,14 @@ module.exports = async function handler(req, res) {
 
   if (req.method === "DELETE") {
     recentChecks = [];
+    jobChecksMap.clear();
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ ok: true }));
     return;
   }
 
   const urlObj = new URL(req.url, `http://${req.headers.host || "localhost"}`);
-  const filterJobId = (urlObj.searchParams.get("jobId") || "").trim().toLowerCase();
+  const filterJobId = normalizeJobId(urlObj.searchParams.get("jobId") || "");
   const isStream = urlObj.searchParams.get("stream") === "1";
 
   // if no job id specified, return empty to preserve privacy
@@ -98,16 +121,22 @@ module.exports = async function handler(req, res) {
     return res.end(JSON.stringify({ recent: [] }));
   }
 
-  const filteredRecent = recentChecks.filter(c => {
-    const cJob = String(c.jobId || "").toLowerCase();
-    return cJob.includes(filterJobId) || filterJobId.includes(cJob);
-  });
+  let filteredRecent = [];
+  if (jobChecksMap.has(filterJobId)) {
+    filteredRecent = jobChecksMap.get(filterJobId);
+  } else {
+    filteredRecent = recentChecks.filter(c => {
+      const cJob = normalizeJobId(c.jobId);
+      return cJob && (cJob === filterJobId || cJob.includes(filterJobId) || filterJobId.includes(cJob));
+    });
+  }
 
   if (isStream) {
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache, no-transform",
-      "Connection": "keep-alive"
+      "Connection": "keep-alive",
+      "X-Accel-Buffering": "no"
     });
 
     res.write("retry: 500\n\n");
@@ -124,7 +153,7 @@ module.exports = async function handler(req, res) {
         clearInterval(pingTimer);
         sseClients.delete(clientObj);
       }
-    }, 3000);
+    }, 2500);
 
     req.on("close", () => {
       clearInterval(pingTimer);

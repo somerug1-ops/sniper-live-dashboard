@@ -7,16 +7,21 @@
   let pollTimer = null;
   let eventSource = null;
   let isFetching = false;
+  let idleTimer = null;
   const renderedKeys = new Set();
+
+  function cleanJob(str) {
+    return String(str || "").replace(/^job(?:id)?[-_:]*/i, "").trim().toLowerCase();
+  }
 
   const params = new URLSearchParams(window.location.search);
   const pathMatch = window.location.pathname.match(/^\/jobid-([a-zA-Z0-9_-]+)/i) ||
                     window.location.pathname.match(/^\/job-([a-zA-Z0-9_-]+)/i);
   const pathJob = pathMatch ? pathMatch[1] : "";
-  const initialJob = params.get("job") || params.get("id") || pathJob || "";
+  const initialJob = cleanJob(params.get("job") || params.get("id") || pathJob || "");
   if (initialJob) {
     jobInput.value = initialJob;
-    activeJobId = initialJob.trim().toLowerCase();
+    activeJobId = initialJob;
     if (pathJob && window.history && typeof window.history.replaceState === "function") {
       window.history.replaceState({}, "", `/?job=${encodeURIComponent(activeJobId)}`);
     }
@@ -49,6 +54,10 @@
     }
 
     if (added > 0) {
+      if (idleTimer) {
+        clearTimeout(idleTimer);
+        idleTimer = null;
+      }
       const notice = document.getElementById("notice");
       if (notice) notice.remove();
 
@@ -72,7 +81,7 @@
     output.appendChild(notice);
   }
 
-  // fast fallback poll every 150ms to ensure zero missed events
+  // fallback poll every 800ms to ensure zero missed events without overloading serverless
   async function fetchUpdates() {
     if (!activeJobId || isFetching) return;
     isFetching = true;
@@ -89,7 +98,7 @@
     }
   }
 
-  // primary direct sse push for true sub-20ms real-time delivery
+  // primary direct sse push for real-time delivery
   function connectSse() {
     if (eventSource) {
       eventSource.close();
@@ -102,6 +111,13 @@
       const streamUrl = `/api/events?stream=1&jobId=${encodeURIComponent(activeJobId)}`;
       eventSource = new EventSource(streamUrl);
 
+      eventSource.onopen = () => {
+        const notice = document.getElementById("notice");
+        if (notice && renderedKeys.size === 0) {
+          notice.textContent = `Connected. Waiting for live checks for job ${activeJobId}...`;
+        }
+      };
+
       eventSource.onmessage = e => {
         try {
           const data = JSON.parse(e.data);
@@ -110,13 +126,17 @@
       };
 
       eventSource.onerror = () => {
-        // browser reconnects automatically using retry header
+        const notice = document.getElementById("notice");
+        if (notice && renderedKeys.size === 0) {
+          notice.textContent = `Reconnecting to live stream for job ${activeJobId}...`;
+        }
       };
     } catch {}
   }
 
   function startLiveSync() {
     if (pollTimer) clearInterval(pollTimer);
+    if (idleTimer) clearTimeout(idleTimer);
     if (eventSource) {
       eventSource.close();
       eventSource = null;
@@ -134,13 +154,21 @@
     // connect direct instant sse push
     connectSse();
 
-    // parallel fast poll fallback every 150ms
+    // parallel poll fallback every 800ms
     fetchUpdates();
-    pollTimer = setInterval(fetchUpdates, 150);
+    pollTimer = setInterval(fetchUpdates, 800);
+
+    // inform user if no checks have arrived after 4s
+    idleTimer = setTimeout(() => {
+      const notice = document.getElementById("notice");
+      if (notice && renderedKeys.size === 0 && activeJobId) {
+        notice.textContent = `Connected. Waiting for scan output... (Make sure this job is active in Discord)`;
+      }
+    }, 4000);
   }
 
   jobInput.addEventListener("input", e => {
-    const val = e.target.value.trim().toLowerCase();
+    const val = cleanJob(e.target.value);
     if (val === activeJobId) return;
 
     activeJobId = val;
